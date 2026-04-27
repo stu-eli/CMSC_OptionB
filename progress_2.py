@@ -53,10 +53,7 @@ def add_task():
     profit_text = profit_entry.get().strip()
 
     if not name or not date_text or not profit_text:
-        messagebox.showwarning(
-            "Missing Input",
-            "Fill in all fields."
-        )
+        messagebox.showwarning("Missing Input", "Fill in all fields.")
         return
 
     try:
@@ -75,9 +72,7 @@ def add_task():
         )
         return
 
-    tasks.append(
-        Task(name, deadline, profit)
-    )
+    tasks.append(Task(name, deadline, profit))
 
     name_entry.delete(0, tk.END)
     deadline_entry.delete(0, tk.END)
@@ -85,81 +80,69 @@ def add_task():
 
     show_tasks(tasks)
 
-    messagebox.showinfo(
-        "Success",
-        "Task added successfully."
-    )
+    messagebox.showinfo("Success", "Task added successfully.")
 
 
 def show_tasks(task_list):
     listbox.delete(0, tk.END)
 
     if not task_list:
-        listbox.insert(
-            tk.END,
-            "No tasks available."
-        )
+        listbox.insert(tk.END, "No tasks available.")
         return
 
-    for i, task in enumerate(task_list,1):
+    now = datetime.datetime.now()
+
+    for i, task in enumerate(task_list, 1):
         text = (
             f"{i}. {task.name} | "
             f"{task.deadline.strftime('%m-%d %H:%M')} | "
             f"Profit:{task.profit}"
         )
-        listbox.insert(tk.END,text)
+
+        listbox.insert(tk.END, text)
+
+        # Zebra rows
+        if i % 2 == 0:
+            listbox.itemconfig(tk.END, bg="#ecf0f1")
+
+        # High profit = green
+        if task.profit >= 5000:
+            listbox.itemconfig(tk.END, fg="#27ae60")
+
+        # Near deadline (<1 hour) = red
+        if (task.deadline - now).total_seconds() < 3600:
+            listbox.itemconfig(tk.END, fg="#e74c3c")
 
 
 def sort_alpha():
-    sorted_tasks = merge_sort(
-        tasks,
-        key=lambda t: t.name.lower()
-    )
+    sorted_tasks = merge_sort(tasks, key=lambda t: t.name.lower())
     show_tasks(sorted_tasks)
 
 
 def sort_deadline():
-    sorted_tasks = merge_sort(
-        tasks,
-        key=lambda t: t.deadline
-    )
+    sorted_tasks = merge_sort(tasks, key=lambda t: t.deadline)
     show_tasks(sorted_tasks)
 
 
 def sort_high_profit():
-    sorted_tasks = merge_sort(
-        tasks,
-        key=lambda t: -t.profit
-    )
+    sorted_tasks = merge_sort(tasks, key=lambda t: -t.profit)
     show_tasks(sorted_tasks)
 
 
 def sort_low_profit():
-    sorted_tasks = merge_sort(
-        tasks,
-        key=lambda t: t.profit
-    )
+    sorted_tasks = merge_sort(tasks, key=lambda t: t.profit)
     show_tasks(sorted_tasks)
 
 
 def generate_schedule():
     if not tasks:
-        messagebox.showwarning(
-            "No Tasks",
-            "Add tasks first."
-        )
+        messagebox.showwarning("No Tasks", "Add tasks first.")
         return
 
-    scheduled = merge_sort(
-        tasks,
-        key=lambda t: t.deadline
-    )
-
+    scheduled = merge_sort(tasks, key=lambda t: t.deadline)
     show_tasks(scheduled)
 
-    total_profit = sum(
-        t.profit for t in scheduled
-    )
+    total_profit = sum(t.profit for t in scheduled)
 
     messagebox.showinfo(
         "Schedule Generated",
@@ -173,113 +156,117 @@ def generate_schedule():
 root = tk.Tk()
 root.title("Smart Task Scheduling System")
 root.geometry("800x600")
+root.configure(bg="#f4f6f9")
 
+
+# ---------------- TITLE ----------------
 
 title = tk.Label(
     root,
     text="SMART TASK SCHEDULING SYSTEM",
-    font=("Arial",18,"bold")
+    font=("Segoe UI", 20, "bold"),
+    fg="#2c3e50",
+    bg="#f4f6f9"
 )
 title.pack(pady=10)
 
 
+# ---------------- BUTTON STYLE ----------------
+
+def styled_button(parent, text, cmd, color):
+    btn = tk.Button(
+        parent,
+        text=text,
+        command=cmd,
+        bg=color,
+        fg="white",
+        activebackground="#34495e",
+        font=("Segoe UI", 9, "bold"),
+        bd=0,
+        padx=10,
+        pady=5,
+        cursor="hand2"
+    )
+
+    def on_enter(e):
+        btn['bg'] = "#2c3e50"
+
+    def on_leave(e):
+        btn['bg'] = color
+
+    btn.bind("<Enter>", on_enter)
+    btn.bind("<Leave>", on_leave)
+
+    return btn
+
+
 # ------- Input Frame -------
 
-frame = tk.Frame(root)
+frame = tk.Frame(root, bg="#f4f6f9")
 frame.pack(pady=10)
 
+tk.Label(frame, text="Task Name", bg="#f4f6f9").grid(row=0, column=0, padx=8)
+name_entry = tk.Entry(frame, width=18, font=("Segoe UI", 10))
+name_entry.grid(row=0, column=1)
 
-tk.Label(
-    frame,
-    text="Task Name"
-).grid(row=0,column=0,padx=8)
+tk.Label(frame, text="Deadline (MM-DD HH:MM)", bg="#f4f6f9").grid(row=0, column=2, padx=8)
+deadline_entry = tk.Entry(frame, width=18, font=("Segoe UI", 10))
+deadline_entry.grid(row=0, column=3)
 
-name_entry = tk.Entry(frame,width=18)
-name_entry.grid(row=0,column=1)
-
-
-tk.Label(
-    frame,
-    text="Deadline (MM-DD HH:MM)"
-).grid(row=0,column=2,padx=8)
-
-deadline_entry = tk.Entry(frame,width=18)
-deadline_entry.grid(row=0,column=3)
+tk.Label(frame, text="Profit", bg="#f4f6f9").grid(row=0, column=4, padx=8)
+profit_entry = tk.Entry(frame, width=10, font=("Segoe UI", 10))
+profit_entry.grid(row=0, column=5)
 
 
-tk.Label(
-    frame,
-    text="Profit"
-).grid(row=0,column=4,padx=8)
+# ------- Add Button -------
 
-profit_entry = tk.Entry(frame,width=10)
-profit_entry.grid(row=0,column=5)
-
-
-add_btn = tk.Button(
-    root,
-    text="Add Task",
-    width=20,
-    command=add_task
-)
+add_btn = styled_button(root, "Add Task", add_task, "#3498db")
 add_btn.pack(pady=8)
 
 
 # ------- Sort Buttons -------
 
-sort_frame = tk.Frame(root)
+sort_frame = tk.Frame(root, bg="#f4f6f9")
 sort_frame.pack(pady=10)
 
 buttons = [
-("Alphabetical",sort_alpha),
-("Deadline",sort_deadline),
-("Highest Profit",sort_high_profit),
-("Lowest Profit",sort_low_profit),
-("Generate Schedule",generate_schedule)
+    ("Alphabetical", sort_alpha),
+    ("Deadline", sort_deadline),
+    ("Highest Profit", sort_high_profit),
+    ("Lowest Profit", sort_low_profit),
+    ("Generate Schedule", generate_schedule)
 ]
 
-for text,cmd in buttons:
-    tk.Button(
-        sort_frame,
-        text=text,
-        command=cmd,
-        width=18
-    ).pack(
-        side=tk.LEFT,
-        padx=5
-    )
+colors = ["#1abc9c", "#9b59b6", "#e67e22", "#e74c3c", "#2ecc71"]
+
+for (text, cmd), color in zip(buttons, colors):
+    styled_button(sort_frame, text, cmd, color).pack(side=tk.LEFT, padx=5)
 
 
 # ------- Task List -------
 
-list_frame = tk.Frame(root)
-list_frame.pack(
-    fill="both",
-    expand=True,
-    padx=20,
-    pady=20
-)
+list_frame = tk.Frame(root, bg="#f4f6f9")
+list_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
 scrollbar = tk.Scrollbar(list_frame)
-scrollbar.pack(
-    side=tk.RIGHT,
-    fill=tk.Y
-)
+scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
 listbox = tk.Listbox(
     list_frame,
-    font=("Courier New",11),
+    font=("Consolas", 11),
+    bg="#ffffff",
+    fg="#2c3e50",
+    selectbackground="#3498db",
+    selectforeground="white",
+    bd=0,
+    highlightthickness=1,
+    highlightcolor="#3498db",
     yscrollcommand=scrollbar.set
 )
 
-listbox.pack(
-    fill="both",
-    expand=True
-)
+listbox.pack(fill="both", expand=True)
 
-scrollbar.config(
-    command=listbox.yview
-)
+scrollbar.config(command=listbox.yview)
 
 
 root.mainloop()
