@@ -1,0 +1,426 @@
+import sys, json, datetime, os
+from PyQt5.QtWidgets import *
+from PyQt5.QtCore import Qt, QPropertyAnimation, QDateTime, QTimer, pyqtProperty, QDate, QRect, QSize
+from PyQt5.QtGui import QFont, QIcon, QPixmap, QColor, QPainter, QPen, QBrush
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+
+DATA_FILE = "tasks.json"
+
+# ================= DATA MODEL =================
+class Task:
+    def __init__(self, name, deadline, priority, category, done=False):
+        self.name = name
+        self.deadline = deadline
+        self.priority = priority
+        self.category = category
+        self.done = done
+
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "deadline": self.deadline.strftime("%Y-%m-%d %H:%M"),
+            "priority": self.priority,
+            "category": self.category,
+            "done": self.done
+        }
+
+    @staticmethod
+    def from_dict(d):
+        return Task(
+            d["name"],
+            datetime.datetime.strptime(d["deadline"], "%Y-%m-%d %H:%M"),
+            d["priority"],
+            d["category"],
+            d.get("done", False)
+        )
+
+# ================= UI COMPONENTS =================
+class StatCard(QFrame):
+    def __init__(self, title, value, color="#3b82f6"):
+        super().__init__()
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: #111827;
+                border-radius: 12px;
+                border: 1px solid #1f2937;
+                padding: 20px;
+            }}
+        """)
+        layout = QVBoxLayout(self)
+        self.lbl_title = QLabel(title.upper())
+        self.lbl_title.setStyleSheet("color: #9ca3af; font-size: 11px; font-weight: 800; letter-spacing: 1px;")
+        self.lbl_val = QLabel(str(value))
+        self.lbl_val.setStyleSheet(f"color: {color}; font-size: 28px; font-weight: 800;")
+        layout.addWidget(self.lbl_title)
+        layout.addWidget(self.lbl_val)
+
+    def update_val(self, val):
+        self.lbl_val.setText(str(val))
+
+class ModernCalendar(QCalendarWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.task_dates = set()
+        self.setVerticalHeaderFormat(QCalendarWidget.NoVerticalHeader)
+        self.setStyleSheet("""
+            QCalendarWidget QAbstractItemView {
+                background-color: #111827;
+                color: #f8fafc;
+                selection-background-color: #3b82f6;
+                selection-color: white;
+            }
+            QCalendarWidget QWidget#qt_calendar_navigationbar { background-color: #030712; }
+            QCalendarWidget QToolButton { color: white; font-weight: bold; }
+        """)
+
+    def set_task_dates(self, dates):
+        self.task_dates = dates
+        self.updateCells()
+
+    def paintCell(self, painter, rect, date):
+        super().paintCell(painter, rect, date)
+        if date in self.task_dates:
+            painter.save()
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setBrush(QColor("#3b82f6"))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(rect.center().x() - 3, rect.bottom() - 8, 6, 6)
+            painter.restore()
+
+class Chart(FigureCanvas):
+    def __init__(self, tasks):
+        fig = Figure(figsize=(5,3), dpi=100, facecolor='#030712')
+        super().__init__(fig)
+        self.ax = fig.add_subplot(111)
+        self.update_chart(tasks)
+
+    def update_chart(self, tasks):
+        self.ax.clear()
+        self.ax.set_facecolor('#030712')
+        priorities = ["Low", "Medium", "High"]
+        counts = [len([t for t in tasks if t.priority == p]) for p in priorities]
+        if any(counts):
+            bars = self.ax.bar(priorities, counts, color=['#10b981', '#f59e0b', '#ef4444'])
+            self.ax.bar_label(bars, color='white', padding=3)
+        self.ax.tick_params(colors='#6b7280', labelsize=9)
+        for s in self.ax.spines.values(): s.set_visible(False)
+        self.draw()
+
+# ================= MAIN APPLICATION =================
+class App(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("TaskMaster Pro")
+        self.resize(1200, 850)
+        
+        self.tasks = []
+        self.modes = ["Student", "Professional", "Personal"]
+        self.load_tasks()
+        self.init_ui()
+        
+        self.notif_timer = QTimer()
+        self.notif_timer.timeout.connect(self.check_deadlines)
+        self.notif_timer.start(60000)
+
+    def get_styles(self):
+        return """
+            QMainWindow { background: #030712; }
+            QWidget { background: #030712; color: #f3f4f6; font-family: 'Segoe UI', sans-serif; }
+            
+            #Sidebar { background: #111827; border-right: 1px solid #1f2937; min-width: 220px; }
+            #Sidebar QPushButton { 
+                background: transparent; border: none; padding: 12px 20px; 
+                text-align: left; font-size: 14px; color: #9ca3af; border-radius: 8px; margin: 2px 10px;
+            }
+            #Sidebar QPushButton:hover { background: #1f2937; color: white; }
+            #Sidebar QPushButton[active="true"] { background: #3b82f6; color: white; font-weight: bold; }
+            
+            QGroupBox { 
+                font-weight: bold; color: white; border: 1px solid #1f2937; 
+                border-radius: 8px; margin-top: 20px; padding-top: 15px; 
+            }
+            
+            QLineEdit, QDateTimeEdit, QComboBox { 
+                background: #0f172a; border: 1px solid #1f2937; 
+                padding: 8px; border-radius: 6px; color: white; 
+            }
+            
+            QPushButton#PrimaryBtn { 
+                background: #3b82f6; font-weight: bold; padding: 12px; 
+                border-radius: 8px; color: white; border: none; font-size: 14px;
+            }
+            QPushButton#PrimaryBtn:hover { background: #2563eb; }
+
+            QListWidget { background: transparent; border: none; outline: none; }
+            QListWidget::item { background: #111827; margin-bottom: 8px; border-radius: 10px; border: 1px solid #1f2937; }
+        """
+
+    def init_ui(self):
+        self.setStyleSheet(self.get_styles())
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        root_layout = QHBoxLayout(main_widget)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        # --- SIDEBAR ---
+        self.sidebar = QFrame()
+        self.sidebar.setObjectName("Sidebar")
+        side_layout = QVBoxLayout(self.sidebar)
+        
+        logo = QLabel("TASK MASTER")
+        logo.setStyleSheet("font-size: 18px; font-weight: 900; padding: 25px 20px; color: #3b82f6;")
+        side_layout.addWidget(logo)
+
+        self.nav_btns = {}
+        for name, icon in [("Dashboard", "📊"), ("Tasks", "📝"), ("Calendar", "📅"), ("Settings", "⚙️")]:
+            btn = QPushButton(f" {icon}  {name}")
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda _, n=name: self.switch_page(n))
+            side_layout.addWidget(btn)
+            self.nav_btns[name] = btn
+        
+        side_layout.addStretch()
+        root_layout.addWidget(self.sidebar)
+
+        # --- CONTENT ---
+        self.stack = QStackedWidget()
+        root_layout.addWidget(self.stack)
+        
+        self.create_dashboard_page()
+        self.create_tasks_page()
+        self.create_calendar_page()
+        self.create_settings_page()
+        
+        self.switch_page("Dashboard")
+
+    def create_dashboard_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.addWidget(QLabel("<h1 style='color: white;'>Overview</h1>"))
+        
+        stats = QHBoxLayout()
+        self.card_total = StatCard("Total Tasks", 0, "#f3f4f6")
+        self.card_pending = StatCard("Pending", 0, "#f59e0b")
+        self.card_overdue = StatCard("Overdue", 0, "#ef4444")
+        stats.addWidget(self.card_total); stats.addWidget(self.card_pending); stats.addWidget(self.card_overdue)
+        layout.addLayout(stats)
+
+        self.canvas = Chart(self.tasks)
+        layout.addWidget(self.canvas)
+        self.stack.addWidget(page)
+
+    def create_tasks_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 20, 30, 20)
+
+        # INPUT AREA (Matching your image)
+        input_box = QGroupBox("Create New Task")
+        grid = QGridLayout(input_box)
+        grid.setVerticalSpacing(15)
+        grid.setHorizontalSpacing(10)
+
+        self.name_in = QLineEdit(); self.name_in.setPlaceholderText("What needs to be done?")
+        self.date_in = QDateTimeEdit(QDateTime.currentDateTime()); self.date_in.setCalendarPopup(True)
+        self.date_in.setDisplayFormat("MM/dd/yyyy hh:mm AP")
+        
+        self.pri_in = QComboBox(); self.pri_in.addItems(["Low", "Medium", "High"])
+        self.cat_in = QComboBox(); self.cat_in.addItems(self.modes)
+        
+        add_btn = QPushButton("Add Task")
+        add_btn.setObjectName("PrimaryBtn")
+        add_btn.clicked.connect(self.add_task)
+        
+        # Row 1
+        grid.addWidget(QLabel("Task Name"), 0, 0)
+        grid.addWidget(self.name_in, 0, 1)
+        grid.addWidget(QLabel("Deadline"), 0, 2)
+        grid.addWidget(self.date_in, 0, 3)
+        
+        # Row 2
+        grid.addWidget(QLabel("Priority"), 1, 0)
+        grid.addWidget(self.pri_in, 1, 1)
+        grid.addWidget(QLabel("Category"), 1, 2)
+        grid.addWidget(self.cat_in, 1, 3)
+        
+        # Row 3 (Full width button)
+        grid.addWidget(add_btn, 2, 0, 1, 4)
+        
+        # Adjust column stretches to make Name and Priority fields wider
+        grid.setColumnStretch(1, 4)
+        grid.setColumnStretch(3, 2)
+
+        layout.addWidget(input_box)
+
+        # FILTER AREA
+        ctrl_layout = QHBoxLayout()
+        self.search_bar = QLineEdit(); self.search_bar.setPlaceholderText("🔍 Search tasks...")
+        self.search_bar.textChanged.connect(self.render_tasks)
+        
+        self.view_mode = QComboBox(); self.view_mode.addItems(["All Categories"] + self.modes)
+        self.view_mode.currentTextChanged.connect(self.render_tasks)
+        
+        clean_btn = QPushButton("🗑 Clear Completed")
+        clean_btn.clicked.connect(self.clear_completed)
+        clean_btn.setStyleSheet("background: #1f2937; padding: 8px; border-radius: 6px;")
+        
+        ctrl_layout.addWidget(self.search_bar, 3)
+        ctrl_layout.addWidget(self.view_mode, 1)
+        ctrl_layout.addWidget(clean_btn, 1)
+        layout.addLayout(ctrl_layout)
+
+        self.list_widget = QListWidget()
+        self.list_widget.itemDoubleClicked.connect(self.toggle_task_complete)
+        self.list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list_widget.customContextMenuRequested.connect(self.show_task_menu)
+        layout.addWidget(self.list_widget)
+        
+        self.stack.addWidget(page)
+
+    def create_calendar_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.addWidget(QLabel("<h1>Calendar View</h1>"))
+        self.calendar = ModernCalendar()
+        self.calendar.selectionChanged.connect(self.on_calendar_date_changed)
+        layout.addWidget(self.calendar)
+        self.cal_list = QListWidget()
+        layout.addWidget(QLabel("<b>Tasks for this day:</b>"))
+        layout.addWidget(self.cal_list)
+        self.stack.addWidget(page)
+
+    def create_settings_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(30, 30, 30, 30)
+        layout.addWidget(QLabel("<h1>Settings</h1>"))
+        export_btn = QPushButton("📤 Export to CSV")
+        export_btn.clicked.connect(self.export_data)
+        layout.addWidget(export_btn)
+        reset_btn = QPushButton("⚠ Delete All Data")
+        reset_btn.setStyleSheet("color: #ef4444;")
+        reset_btn.clicked.connect(self.reset_data)
+        layout.addWidget(reset_btn)
+        layout.addStretch()
+        self.stack.addWidget(page)
+
+    # --- LOGIC ---
+    def switch_page(self, name):
+        indices = {"Dashboard": 0, "Tasks": 1, "Calendar": 2, "Settings": 3}
+        self.stack.setCurrentIndex(indices[name])
+        for n, btn in self.nav_btns.items():
+            btn.setProperty("active", n == name)
+            btn.setStyle(btn.style()) 
+        if name == "Dashboard": self.update_dashboard_stats()
+        if name == "Tasks": self.render_tasks()
+        if name == "Calendar": self.update_calendar_markers()
+
+    def add_task(self):
+        name = self.name_in.text().strip()
+        if not name: return
+        t = Task(name, self.date_in.dateTime().toPyDateTime(), self.pri_in.currentText(), self.cat_in.currentText())
+        self.tasks.append(t)
+        self.name_in.clear()
+        self.render_tasks()
+        self.save_tasks()
+
+    def render_tasks(self, target_list=None, filter_date=None):
+        lst = target_list if target_list else self.list_widget
+        lst.clear()
+        query = self.search_bar.text().lower() if not filter_date else ""
+        filter_cat = self.view_mode.currentText() if not filter_date else "All Categories"
+        
+        for i, t in enumerate(self.tasks):
+            if filter_date and t.deadline.date() != filter_date: continue
+            if not filter_date:
+                if query and query not in t.name.lower(): continue
+                if filter_cat != "All Categories" and t.category != filter_cat: continue
+            
+            item = QListWidgetItem()
+            lst.addItem(item)
+            w = QWidget()
+            l = QHBoxLayout(w)
+            txt = QVBoxLayout()
+            main_lbl = QLabel(f"{'✅' if t.done else '⏳'} {t.name}")
+            main_lbl.setStyleSheet(f"font-weight: bold; {'text-decoration: line-through; color: #4b5563;' if t.done else ''}")
+            sub_lbl = QLabel(f"{t.category} | {t.deadline.strftime('%b %d, %H:%M')} | {t.priority}")
+            sub_lbl.setStyleSheet("color: #6b7280; font-size: 11px;")
+            txt.addWidget(main_lbl); txt.addWidget(sub_lbl)
+            l.addLayout(txt); l.addStretch()
+            item.setSizeHint(w.sizeHint())
+            item.setData(Qt.UserRole, i)
+            lst.setItemWidget(item, w)
+
+    def on_calendar_date_changed(self):
+        q = self.calendar.selectedDate()
+        self.render_tasks(self.cal_list, datetime.date(q.year(), q.month(), q.day()))
+
+    def update_calendar_markers(self):
+        dates = {QDate(t.deadline.year, t.deadline.month, t.deadline.day) for t in self.tasks if not t.done}
+        self.calendar.set_task_dates(dates)
+
+    def toggle_task_complete(self, item):
+        idx = item.data(Qt.UserRole)
+        self.tasks[idx].done = not self.tasks[idx].done
+        self.render_tasks()
+        self.update_dashboard_stats()
+
+    def show_task_menu(self, pos):
+        item = self.list_widget.itemAt(pos)
+        if not item: return
+        menu = QMenu()
+        del_act = menu.addAction("🗑 Delete Task")
+        if menu.exec_(self.list_widget.mapToGlobal(pos)) == del_act:
+            del self.tasks[item.data(Qt.UserRole)]
+            self.render_tasks()
+
+    def update_dashboard_stats(self):
+        total = len(self.tasks)
+        pending = len([t for t in self.tasks if not t.done])
+        overdue = len([t for t in self.tasks if not t.done and t.deadline < datetime.datetime.now()])
+        self.card_total.update_val(total)
+        self.card_pending.update_val(pending)
+        self.card_overdue.update_val(overdue)
+        self.canvas.update_chart(self.tasks)
+
+    def clear_completed(self):
+        self.tasks = [t for t in self.tasks if not t.done]
+        self.render_tasks()
+
+    def check_deadlines(self):
+        now = datetime.datetime.now()
+        for t in self.tasks:
+            if not t.done and 0 < (t.deadline - now).total_seconds() < 600:
+                QMessageBox.warning(self, "Reminder", f"'{t.name}' is due soon!")
+
+    def save_tasks(self):
+        with open(DATA_FILE, "w") as f: json.dump([t.to_dict() for t in self.tasks], f, indent=4)
+
+    def load_tasks(self):
+        if os.path.exists(DATA_FILE):
+            try:
+                with open(DATA_FILE, "r") as f: self.tasks = [Task.from_dict(d) for d in json.load(f)]
+            except: pass
+
+    def export_data(self):
+        import csv
+        path, _ = QFileDialog.getSaveFileName(self, "Export", "", "CSV (*.csv)")
+        if path:
+            with open(path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Task", "Deadline", "Priority", "Category", "Done"])
+                for t in self.tasks: writer.writerow([t.name, t.deadline, t.priority, t.category, t.done])
+
+    def reset_data(self):
+        if QMessageBox.question(self, "Reset", "Clear all data?", QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
+            self.tasks = []; self.render_tasks(); self.update_dashboard_stats()
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = App()
+    window.show()
+    sys.exit(app.exec_())
